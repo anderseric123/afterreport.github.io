@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -401,7 +402,16 @@
       margin-bottom: 3px;
       display: flex;
       align-items: center;
+      justify-content: space-between;
       gap: 7px;
+    }
+
+    .risk-title-text {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      min-width: 0;
+      flex: 1;
     }
 
     .risk-head::before {
@@ -415,22 +425,57 @@
       flex: 0 0 auto;
     }
 
-    .risk-card.risk-up .risk-head {
+    .risk-card.risk-color-red .risk-head {
       color: var(--red);
     }
 
-    .risk-card.risk-up .risk-head::before {
+    .risk-card.risk-color-red .risk-head::before {
       border-bottom-color: var(--red);
-      transform: rotate(0deg);
     }
 
-    .risk-card.risk-down .risk-head {
+    .risk-card.risk-color-green .risk-head {
       color: var(--green);
     }
 
-    .risk-card.risk-down .risk-head::before {
+    .risk-card.risk-color-green .risk-head::before {
       border-bottom-color: var(--green);
+    }
+
+    .risk-card.risk-arrow-up .risk-head::before {
+      transform: rotate(0deg);
+    }
+
+    .risk-card.risk-arrow-down .risk-head::before {
       transform: rotate(180deg);
+    }
+
+    .risk-manual-controls {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      flex: 0 0 auto;
+    }
+
+    .risk-manual-controls label {
+      font-size: 10px;
+      color: #6b7280;
+      display: inline-flex;
+      align-items: center;
+      gap: 2px;
+    }
+
+    .risk-style-select {
+      font-size: 10px;
+      line-height: 1.2;
+      border: 1px solid #d4d8de;
+      border-radius: 6px;
+      background: #fff;
+      color: #374151;
+      padding: 1px 4px;
+    }
+
+    .report-card.export-mode .risk-manual-controls {
+      display: none !important;
     }
 
     .risk-card p {
@@ -780,7 +825,8 @@
       payload: structuredClone(DEFAULT_PAYLOAD),
       logoSrc: LOGO_DEFAULT,
       qrSrc: QR_DEFAULT,
-      watermarkSrc: WATERMARK_DEFAULT
+      watermarkSrc: WATERMARK_DEFAULT,
+      manualRiskOverrides: {}
     };
 
     function escapeHTML(input) {
@@ -1004,14 +1050,24 @@
       return "risk-down";
     }
 
-    function inferTitleTone(report) {
-      const text = `${report?.title || ""} ${report?.summary || ""}`;
+    function inferRiskStyle(riskItem) {
+      const tone = inferRiskTone(riskItem);
+      if (tone === "risk-up") {
+        return { color: "red", arrow: "up" };
+      }
+      return { color: "green", arrow: "down" };
+    }
 
+    function getRiskOverride(cardIndex, riskIndex) {
+      return state.manualRiskOverrides?.[cardIndex]?.[riskIndex] || { color: "auto", arrow: "auto" };
+    }
+
+    function inferToneByText(text) {
       const upWords = [
-        "上涨", "上行", "走强", "抬升", "反弹", "修复", "偏强", "新高", "拉升"
+        "上涨", "上行", "走强", "抬升", "反弹", "修复", "偏强", "新高", "拉升", "领涨", "涨停", "收涨", "回升"
       ];
       const downWords = [
-        "下跌", "下行", "走弱", "回落", "回调", "重心回落", "下挫", "承压", "回吐", "破位"
+        "下跌", "下行", "走弱", "回落", "回调", "重心回落", "下挫", "承压", "回吐", "破位", "收跌", "跳空下跌", "跳空下挫"
       ];
 
       let upScore = 0;
@@ -1023,7 +1079,21 @@
       return "title-up";
     }
 
-    function renderCardHTML(report, publishTime) {
+    function inferTitleTone(report) {
+      const chain = Array.isArray(report?.chain) ? report.chain : [];
+      const reaction = chain.find((item) => String(item?.label || "").includes("盘面反应"));
+
+      // 优先按“盘面反应”决定标题颜色：上涨=红，下跌=绿
+      if (reaction && reaction.text) {
+        return inferToneByText(String(reaction.text));
+      }
+
+      // 回退：用标题+摘要判定
+      const fallbackText = `${report?.title || ""} ${report?.summary || ""}`;
+      return inferToneByText(fallbackText);
+    }
+
+    function renderCardHTML(report, publishTime, cardIndex) {
       const chainHTML = report.chain
         .map((item, idx) => {
           const card = `<article class="chain-card"><p><span class="chain-key">${escapeHTML(item.label)}：</span>${escapeHTML(item.text)}</p></article>`;
@@ -1033,9 +1103,34 @@
         .join("");
 
       const risksHTML = report.risks
-        .map((item) => {
-          const toneClass = inferRiskTone(item);
-          return `<article class="risk-card ${toneClass}"><div class="risk-head">${escapeHTML(item.title)}</div><p>${escapeHTML(item.text)}</p></article>`;
+        .map((item, riskIndex) => {
+          const autoStyle = inferRiskStyle(item);
+          const override = getRiskOverride(cardIndex, riskIndex);
+          const finalColor = override.color && override.color !== "auto" ? override.color : autoStyle.color;
+          const finalArrow = override.arrow && override.arrow !== "auto" ? override.arrow : autoStyle.arrow;
+
+          return `<article class="risk-card risk-color-${finalColor} risk-arrow-${finalArrow}">
+            <div class="risk-head">
+              <span class="risk-title-text">${escapeHTML(item.title)}</span>
+              <span class="risk-manual-controls">
+                <label>色
+                  <select class="risk-style-select" data-card-index="${cardIndex}" data-risk-index="${riskIndex}" data-kind="color">
+                    <option value="auto" ${override.color === "auto" ? "selected" : ""}>自动</option>
+                    <option value="red" ${override.color === "red" ? "selected" : ""}>红</option>
+                    <option value="green" ${override.color === "green" ? "selected" : ""}>绿</option>
+                  </select>
+                </label>
+                <label>箭
+                  <select class="risk-style-select" data-card-index="${cardIndex}" data-risk-index="${riskIndex}" data-kind="arrow">
+                    <option value="auto" ${override.arrow === "auto" ? "selected" : ""}>自动</option>
+                    <option value="up" ${override.arrow === "up" ? "selected" : ""}>上</option>
+                    <option value="down" ${override.arrow === "down" ? "selected" : ""}>下</option>
+                  </select>
+                </label>
+              </span>
+            </div>
+            <p>${escapeHTML(item.text)}</p>
+          </article>`;
         })
         .join("");
       const radarDimText = `${report.radar.length}维`;
@@ -1116,7 +1211,7 @@
         const fallback = reports[reports.length - 1] || DEFAULT_PAYLOAD.reports[0];
         const report = normalizeReport(reports[i] || fallback);
         const card = document.getElementById(`reportCard${i}`);
-        card.innerHTML = renderCardHTML(report, publishTime);
+        card.innerHTML = renderCardHTML(report, publishTime, i);
       }
     }
 
@@ -1301,10 +1396,12 @@
 
       setStatus(`正在生成图 ${index + 1}...`);
       try {
+        card.classList.add("export-mode");
         const canvas = await renderNodeToCanvas(card, 3);
         const blob = await compressCanvasToTarget(canvas, TARGET_BYTES);
         if (!blob) {
           setStatus(`图 ${index + 1} 导出失败，请重试。`, true);
+          card.classList.remove("export-mode");
           return;
         }
 
@@ -1314,6 +1411,8 @@
         setStatus(`图 ${index + 1} 下载完成，文件约 ${sizeKB}KB。`);
       } catch (error) {
         setStatus(`图 ${index + 1} 导出失败：${error.message || "浏览器限制"}。请刷新页面后重试。`, true);
+      } finally {
+        card.classList.remove("export-mode");
       }
     }
 
@@ -1352,6 +1451,7 @@
       }
 
       state.payload = parsed;
+      state.manualRiskOverrides = {};
       renderPreviews(state.payload);
       if (reportCount < CARD_COUNT) {
         setStatus(`已应用 JSON（当前 ${reportCount} 个品种）。未提供的示例位将临时复用最后一条内容。`);
@@ -1478,6 +1578,25 @@
         const index = Number(btn.getAttribute("data-download"));
         if (Number.isNaN(index)) return;
         await downloadCard(index);
+      });
+
+      document.getElementById("cardsWrap").addEventListener("change", (event) => {
+        const select = event.target.closest(".risk-style-select");
+        if (!select) return;
+
+        const cardIndex = Number(select.getAttribute("data-card-index"));
+        const riskIndex = Number(select.getAttribute("data-risk-index"));
+        const kind = select.getAttribute("data-kind");
+        const value = select.value;
+        if (Number.isNaN(cardIndex) || Number.isNaN(riskIndex)) return;
+        if (!["color", "arrow"].includes(kind)) return;
+
+        if (!state.manualRiskOverrides[cardIndex]) state.manualRiskOverrides[cardIndex] = {};
+        if (!state.manualRiskOverrides[cardIndex][riskIndex]) {
+          state.manualRiskOverrides[cardIndex][riskIndex] = { color: "auto", arrow: "auto" };
+        }
+        state.manualRiskOverrides[cardIndex][riskIndex][kind] = value;
+        renderPreviews(state.payload);
       });
     }
 
