@@ -250,6 +250,13 @@
       margin-bottom: 8px;
     }
 
+    .title-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
     .main-title {
       font-size: 20px;
       line-height: 1.2;
@@ -257,6 +264,8 @@
       color: var(--red);
       letter-spacing: 0.2px;
       margin-bottom: 6px;
+      flex: 1;
+      min-width: 0;
       display: -webkit-box;
       -webkit-line-clamp: 2;
       -webkit-box-orient: vertical;
@@ -475,6 +484,36 @@
     }
 
     .report-card.export-mode .risk-manual-controls {
+      display: none !important;
+    }
+
+    .title-manual-controls {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      flex: 0 0 auto;
+      margin-top: 2px;
+    }
+
+    .title-manual-controls label {
+      font-size: 10px;
+      color: #6b7280;
+      display: inline-flex;
+      align-items: center;
+      gap: 2px;
+    }
+
+    .title-style-select {
+      font-size: 10px;
+      line-height: 1.2;
+      border: 1px solid #d4d8de;
+      border-radius: 6px;
+      background: #fff;
+      color: #374151;
+      padding: 1px 4px;
+    }
+
+    .report-card.export-mode .title-manual-controls {
       display: none !important;
     }
 
@@ -826,7 +865,8 @@
       logoSrc: LOGO_DEFAULT,
       qrSrc: QR_DEFAULT,
       watermarkSrc: WATERMARK_DEFAULT,
-      manualRiskOverrides: {}
+      manualRiskOverrides: {},
+      manualTitleOverrides: {}
     };
 
     function escapeHTML(input) {
@@ -1062,6 +1102,10 @@
       return state.manualRiskOverrides?.[cardIndex]?.[riskIndex] || { color: "auto", arrow: "auto" };
     }
 
+    function getTitleOverride(cardIndex) {
+      return state.manualTitleOverrides?.[cardIndex] || "auto";
+    }
+
     function inferToneByText(text) {
       const upWords = [
         "上涨", "上行", "走强", "抬升", "反弹", "修复", "偏强", "新高", "拉升", "领涨", "涨停", "收涨", "回升"
@@ -1134,7 +1178,14 @@
         })
         .join("");
       const radarDimText = `${report.radar.length}维`;
-      const titleToneClass = inferTitleTone(report);
+      const autoTitleToneClass = inferTitleTone(report);
+      const titleOverride = getTitleOverride(cardIndex);
+      const titleToneClass = titleOverride === "red"
+        ? "title-up"
+        : titleOverride === "green"
+          ? "title-down"
+          : autoTitleToneClass;
+      const titleSelectValue = titleToneClass === "title-down" ? "green" : "red";
 
       return `
         <div class="watermark-layer"><img src="${escapeHTML(state.watermarkSrc)}" alt="金十期货水印"/></div>
@@ -1147,7 +1198,17 @@
         </header>
 
         <section class="title-block">
-          <h1 class="main-title ${titleToneClass}">${escapeHTML(report.title)}</h1>
+          <div class="title-head">
+            <h1 class="main-title ${titleToneClass}">${escapeHTML(report.title)}</h1>
+            <span class="title-manual-controls">
+              <label>色
+                <select class="title-style-select" data-card-index="${cardIndex}" data-kind="title-color">
+                  <option value="red" ${titleSelectValue === "red" ? "selected" : ""}>红</option>
+                  <option value="green" ${titleSelectValue === "green" ? "selected" : ""}>绿</option>
+                </select>
+              </label>
+            </span>
+          </div>
           <p class="summary">${escapeHTML(report.summary)}</p>
         </section>
 
@@ -1225,6 +1286,8 @@
       const input = document.getElementById("jsonInput");
       input.value = JSON.stringify(DEFAULT_PAYLOAD, null, 2);
       state.payload = structuredClone(DEFAULT_PAYLOAD);
+      state.manualRiskOverrides = {};
+      state.manualTitleOverrides = {};
       renderPreviews(state.payload);
       setStatus("已载入示例 JSON，可直接修改后点击应用。", false);
     }
@@ -1452,6 +1515,7 @@
 
       state.payload = parsed;
       state.manualRiskOverrides = {};
+      state.manualTitleOverrides = {};
       renderPreviews(state.payload);
       if (reportCount < CARD_COUNT) {
         setStatus(`已应用 JSON（当前 ${reportCount} 个品种）。未提供的示例位将临时复用最后一条内容。`);
@@ -1581,6 +1645,19 @@
       });
 
       document.getElementById("cardsWrap").addEventListener("change", (event) => {
+        const titleSelect = event.target.closest(".title-style-select");
+        if (titleSelect) {
+          const cardIndex = Number(titleSelect.getAttribute("data-card-index"));
+          const kind = titleSelect.getAttribute("data-kind");
+          const value = titleSelect.value;
+          if (Number.isNaN(cardIndex)) return;
+          if (kind !== "title-color") return;
+          if (!["red", "green"].includes(value)) return;
+          state.manualTitleOverrides[cardIndex] = value;
+          renderPreviews(state.payload);
+          return;
+        }
+
         const select = event.target.closest(".risk-style-select");
         if (!select) return;
 
